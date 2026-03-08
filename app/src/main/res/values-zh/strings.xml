@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">电子跳蛋</string>
+    <string name="load_failed">音频加载失败</string>
+    <string name="status_idle">准备好迎接高潮了吗？</string>
+    <string name="status_playing">沉溺在律动中...即将到达顶点...</string>
+    <string name="btn_import">导入音源</string>
+    <string name="btn_play_pause">开始/暂停</string>
+</resources>

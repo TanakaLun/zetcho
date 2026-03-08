@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">Haptic Lab</string>
+    <string name="load_failed">Load failed</string>
+    <string name="status_idle">Ready to peak?</string>
+    <string name="status_playing">Surrendering to the rhythm...</string>
+    <string name="btn_import">Import Beat</string>
+    <string name="btn_play_pause">Play/Pause</string>
+</resources>
