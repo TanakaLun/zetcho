@@ -1,8 +1,28 @@
 <resources>
     <string name="app_name">Haptic Lab</string>
-    <string name="load_failed">Load failed</string>
     <string name="status_idle">Ready to peak?</string>
-    <string name="status_playing">Surrendering to the rhythm...</string>
-    <string name="btn_import">Import Beat</string>
-    <string name="btn_play_pause">Play/Pause</string>
+    <string name="status_playing">Surrendering to the rhythm... almost there...</string>
+    <string name="status_preset">Syncing sensory frequency: %s</string>
+    
+    <string name="btn_import">Get Energy</string>
+    <string name="dialog_title_source">Choose Sensation Source</string>
+    <string name="dialog_title_preset">Select Frequency Preset</string>
+    <string name="option_preset">Preset Frequencies (Endless)</string>
+    <string name="option_custom">Import Local Audio</string>
+    
+    <string name="preset_rose">Rose Coast (Gentle Waves)</string>
+    <string name="preset_gold">Golden Hall (Grand &amp; Solemn)</string>
+    <string name="preset_ocean">Deep Ocean (Deep Resonance)</string>
+    <string name="preset_passion">Wild Passion (Intense Beats)</string>
+
+    <string name="warning_title">⚠️ Enter Extreme Mode?</string>
+    <string name="warning_content">This mode unlocks motor voltage limits for a more intense sensory experience. It may cause irreversible damage to the motor. Surrender to sensation?</string>
+    <string name="btn_continue">Yes, take me there</string>
+    <string name="btn_back">Back</string>
+    
+    <string name="settings_title">Intensity Control</string>
+    <string name="setting_boost_title">Extreme Boost (High Voltage Mode)</string>
+    <string name="setting_boost_label">Current Multiplier: %1$.1fx</string>
+    <string name="setting_dynamic_title">Smart Dynamic Frequency (Beta)</string>
+    <string name="setting_dynamic_desc">Automatically compensates vibration based on bass depth</string>
 </resources>

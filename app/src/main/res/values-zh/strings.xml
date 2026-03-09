@@ -1,8 +1,24 @@
 <resources>
-    <string name="app_name">电子跳蛋</string>
-    <string name="load_failed">音频加载失败</string>
+    <string name="app_name">Haptic Lab</string>
     <string name="status_idle">准备好迎接高潮了吗？</string>
     <string name="status_playing">沉溺在律动中...即将到达顶点...</string>
-    <string name="btn_import">导入音源</string>
-    <string name="btn_play_pause">开始/暂停</string>
+    <string name="status_preset">正在同步预设感官频率: %s</string>
+    <string name="btn_import">获取能量</string>
+    <string name="dialog_title_source">选择感官来源</string>
+    <string name="dialog_title_preset">选择频率预设</string>
+    <string name="option_preset">预设频率（无限持久）</string>
+    <string name="option_custom">本地音频导入</string>
+    <string name="preset_rose">玫瑰海岸 (温柔起伏)</string>
+    <string name="preset_gold">金色大厅 (庄重宏大)</string>
+    <string name="preset_ocean">大洋深处 (深邃共振)</string>
+    <string name="preset_passion">激情澎湃 (狂野打击)</string>
+    <string name="warning_title">⚠️ 进入极致模式？</string>
+    <string name="warning_content">该模式将解锁马达电压限制，提供更强烈的感官体验。可能会对马达造成不可逆损伤。继续投降于感官？</string>
+    <string name="btn_continue">确认，我要巅峰</string>
+    <string name="btn_back">返回</string>
+    <string name="settings_title">调教中心</string>
+    <string name="setting_boost_title">极致震感增强 (马达高压模式)</string>
+    <string name="setting_boost_label">当前倍率: %1$.1fx</string>
+    <string name="setting_dynamic_title">智能动态频率 (Beta)</string>
+    <string name="setting_dynamic_desc">开启后将根据音频低音深度自动补偿震动</string>
 </resources>

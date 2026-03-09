@@ -1,22 +1,20 @@
 package io.tl.haptic
 
-import android.Manifest
-import android.content.Intent
-import android.content.pm.PackageManager
 import android.media.MediaPlayer
 import android.media.audiofx.Visualizer
 import android.net.Uri
-import android.os.Bundle
-import android.os.VibrationEffect
-import android.os.Vibrator
-import android.widget.Toast
+import android.os.*
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -29,232 +27,314 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
+import io.tl.haptic.ui.*
 import io.tl.haptic.ui.theme.HapticGeneratorTheme
-import kotlin.math.hypot
-import kotlin.math.sin
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlin.math.*
 
 class MainActivity : ComponentActivity() {
+    private val viewModel: HapticViewModel by viewModels()
     private var mediaPlayer: MediaPlayer? = null
     private var visualizer: Visualizer? = null
-    private var lastVibrateTime: Long = 0
 
-    private val rawWaveformData = mutableStateListOf<Float>().apply { repeat(32) { add(0f) } }
-    private var bassIntensity = mutableStateOf(0f) 
-    private var isPlaying = mutableStateOf(false)
-    private var isAudioReady = mutableStateOf(false)
-
-    private val filePicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { it?.let { prepareAudio(it) } }
+    private val filePicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let { loadAudio(it) }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        setContent {
-            HapticGeneratorTheme {
-                MainScreen(
-                    waveformData = rawWaveformData,
-                    intensity = bassIntensity.value,
-                    isReady = isAudioReady.value,
-                    isPlaying = isPlaying.value,
-                    onImport = { filePicker.launch(arrayOf("audio/*")) },
-                    onPlayPause = { togglePlay() }
-                )
+
+        lifecycleScope.launch {
+            while(true) {
+                if (viewModel.isPlaying && viewModel.intensity.floatValue > 0.05f) {
+                    triggerHaptic(viewModel.intensity.floatValue)
+                }
+                delay(60)
             }
         }
-        checkPermissions()
+
+        setContent {
+            HapticGeneratorTheme(isSensualMode = viewModel.isSensualMode) {
+                Surface(modifier = Modifier.fillMaxSize()) {
+                    if (viewModel.isShowingSettings) {
+                        SettingsPage(viewModel)
+                    } else {
+                        MainScreen(
+                            viewModel = viewModel,
+                            onOpenFilePicker = { filePicker.launch(arrayOf("audio/*")) },
+                            onTogglePlay = { handleTogglePlay() }
+                        )
+                    }
+                }
+            }
+        }
     }
 
-    private fun prepareAudio(uri: Uri) {
-        try {
-            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            mediaPlayer?.release()
-            visualizer?.release()
+    private fun handleTogglePlay() {
+        if (viewModel.isPlaying) {
+            viewModel.stopAll()
+            mediaPlayer?.pause()
+            visualizer?.enabled = false
+        } else {
+            if (viewModel.currentMode == HapticMode.AUDIO && mediaPlayer != null) {
+                mediaPlayer?.start()
+                visualizer?.enabled = true
+                viewModel.isPlaying = true
+            }
+        }
+    }
 
+    private fun loadAudio(uri: Uri) {
+        viewModel.stopAll()
+        mediaPlayer?.release()
+        visualizer?.release()
+
+        try {
             mediaPlayer = MediaPlayer().apply {
                 setDataSource(this@MainActivity, uri)
                 prepare()
-                isAudioReady.value = true
+                setOnCompletionListener { 
+                    viewModel.stopAll()
+                    visualizer?.enabled = false
+                }
             }
-
+            
             visualizer = Visualizer(mediaPlayer!!.audioSessionId).apply {
                 captureSize = Visualizer.getCaptureSizeRange()[1]
                 setDataCaptureListener(object : Visualizer.OnDataCaptureListener {
                     override fun onWaveFormDataCapture(v: Visualizer?, waveform: ByteArray?, samplingRate: Int) {
-                        waveform?.let { updateWaveformUI(it) }
+                        waveform?.let { data ->
+                            val points = List(64) { i ->
+                                val idx = (i * (data.size / 64)).coerceIn(0, data.size - 1)
+                                ((data[idx].toInt() and 0xFF) - 128) / 128f
+                            }
+                            viewModel.updateWaveform(points)
+                        }
                     }
+
                     override fun onFftDataCapture(v: Visualizer?, fft: ByteArray?, samplingRate: Int) {
-                        fft?.let { processFft(it) }
+                        fft?.let { safeFft ->
+                            var energy = 0f
+                            for (i in 1..12) {
+                                val r = safeFft[i * 2].toFloat()
+                                val im = safeFft[i * 2 + 1].toFloat()
+                                energy += hypot(r, im)
+                            }
+                            viewModel.intensity.floatValue = (energy / 600f).coerceIn(0f, 1f)
+                        }
                     }
                 }, Visualizer.getMaxCaptureRate() / 2, true, true)
                 enabled = true
             }
-        } catch (e: Exception) {
-            Toast.makeText(this, getString(R.string.load_failed), Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    private fun updateWaveformUI(data: ByteArray) {
-        val step = data.size / 32
-        for (i in 0 until 32) {
-            val sample = (data[i * step].toInt() and 0xFF) - 128
-            rawWaveformData[i] = sample.toFloat() / 128f
-        }
-    }
-
-    private fun processFft(fft: ByteArray) {
-        if (mediaPlayer?.isPlaying != true) return
-        var bassEnergy = 0f
-        for (i in 1..8) { 
-            val real = fft[i * 2].toFloat()
-            val imag = fft[i * 2 + 1].toFloat()
-            bassEnergy += hypot(real, imag)
-        }
-        val normalizedBass = (bassEnergy / 500f).coerceIn(0f, 1f)
-        bassIntensity.value = normalizedBass
-        if (normalizedBass > 0.35f) {
-            triggerHaptic(normalizedBass)
-        }
+            
+            viewModel.currentMode = HapticMode.AUDIO
+            mediaPlayer?.start()
+            viewModel.isPlaying = true
+        } catch (e: Exception) { e.printStackTrace() }
     }
 
     private fun triggerHaptic(intensity: Float) {
-        val now = System.currentTimeMillis()
-        if (now - lastVibrateTime < 90) return
-        val vibrator = getSystemService(Vibrator::class.java)
-        val strength = (intensity * intensity * 255).toInt().coerceIn(10, 255)
-        vibrator?.vibrate(VibrationEffect.createOneShot(40, strength))
-        lastVibrateTime = now
+        val vibrator = getSystemService(Vibrator::class.java) ?: return
+        val boost = if (viewModel.isSensualMode) 1.8f else 1.0f
+        val finalStrength = (intensity * intensity * 255 * boost * viewModel.vibrationBoost).toInt().coerceIn(0, 255)
+        vibrator.vibrate(VibrationEffect.createOneShot(50, finalStrength))
     }
 
-    private fun togglePlay() {
-        mediaPlayer?.let {
-            if (it.isPlaying) {
-                it.pause()
-                isPlaying.value = false
-            } else {
-                it.start()
-                isPlaying.value = true
-            }
-        }
-    }
-
-    private fun checkPermissions() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            registerForActivityResult(ActivityResultContracts.RequestPermission()) {}.launch(Manifest.permission.RECORD_AUDIO)
-        }
+    override fun onDestroy() {
+        super.onDestroy()
+        mediaPlayer?.release()
+        visualizer?.release()
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MainScreen(
-    waveformData: List<Float>,
-    intensity: Float,
-    isReady: Boolean,
-    isPlaying: Boolean,
-    onImport: () -> Unit,
-    onPlayPause: () -> Unit
-) {
+fun MainScreen(viewModel: HapticViewModel, onOpenFilePicker: () -> Unit, onTogglePlay: () -> Unit) {
+    var showSourceDialog by remember { mutableStateOf(false) }
+    var showPresetDialog by remember { mutableStateOf(false) }
+    var showWarning by remember { mutableStateOf(false) }
+    var clickCount by remember { mutableIntStateOf(0) }
+
     Scaffold(
         modifier = Modifier.fillMaxSize(),
-        topBar = { CenterAlignedTopAppBar(title = { Text(stringResource(R.string.app_name)) }) }
-    ) { padding ->
+        topBar = {
+            CenterAlignedTopAppBar(
+                title = {
+                    Text(stringResource(R.string.app_name), modifier = Modifier.clickable { 
+                        if (++clickCount >= 3) { showWarning = true; clickCount = 0 }
+                    })
+                },
+                actions = { 
+                    IconButton(onClick = { viewModel.isShowingSettings = true }) { 
+                        Icon(Icons.Default.Settings, null) 
+                    } 
+                }
+            )
+        }
+    ) { innerPadding ->
         Column(
-            modifier = Modifier.padding(padding).fillMaxSize().padding(24.dp),
+            modifier = Modifier
+                .padding(innerPadding)
+                .consumeWindowInsets(innerPadding)
+                .fillMaxSize()
+                .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(32.dp)
         ) {
-            // 状态文字提示
-            Text(
-                text = if (isPlaying) stringResource(R.string.status_playing) else stringResource(R.string.status_idle),
-                style = MaterialTheme.typography.titleMedium,
-                color = if (isPlaying) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
-            )
-
             Card(
-                modifier = Modifier.fillMaxWidth().height(260.dp),
-                shape = RoundedCornerShape(28.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+                modifier = Modifier.fillMaxWidth().height(300.dp),
+                shape = RoundedCornerShape(32.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
             ) {
-                RealtimeWaveform(waveformData, intensity, isPlaying)
+                RealtimeWaveform(viewModel.rawWaveformData, viewModel.isPlaying)
             }
 
-            LinearProgressIndicator(
-                progress = { intensity },
-                modifier = Modifier.fillMaxWidth().height(8.dp).padding(horizontal = 20.dp),
-                strokeCap = StrokeCap.Round
+            Text(
+                text = if (viewModel.isPlaying) stringResource(R.string.status_playing) else stringResource(R.string.status_idle),
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.secondary
             )
 
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                FilledTonalIconButton(
-                    onClick = onImport,
-                    modifier = Modifier.size(64.dp),
-                    shape = RoundedCornerShape(20.dp)
-                ) {
-                    Icon(Icons.Default.Add, contentDescription = stringResource(R.string.btn_import))
+            Spacer(Modifier.weight(1f))
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                FilledTonalIconButton(onClick = { showSourceDialog = true }, modifier = Modifier.size(72.dp)) {
+                    Icon(Icons.Default.Add, null, modifier = Modifier.size(32.dp))
                 }
-
-                Spacer(modifier = Modifier.width(48.dp))
-
+                Spacer(Modifier.width(48.dp))
                 LargeFloatingActionButton(
-                    onClick = onPlayPause,
+                    onClick = { onTogglePlay() },
                     shape = RoundedCornerShape(24.dp),
-                    containerColor = if (isPlaying) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer
+                    containerColor = if (viewModel.isPlaying) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer
                 ) {
-                    Icon(
-                        imageVector = if (isPlaying) Icons.Default.Close else Icons.Default.PlayArrow,
-                        contentDescription = stringResource(R.string.btn_play_pause),
-                        modifier = Modifier.size(40.dp)
-                    )
+                    Icon(if (viewModel.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null, modifier = Modifier.size(40.dp))
                 }
             }
         }
+    }
+
+    if (showWarning) {
+        AlertDialog(
+            onDismissRequest = { showWarning = false },
+            title = { Text(stringResource(R.string.warning_title)) },
+            text = { Text(stringResource(R.string.warning_content)) },
+            confirmButton = { 
+                Button(onClick = { viewModel.isSensualMode = true; showWarning = false }) { 
+                    Text(stringResource(R.string.btn_continue)) 
+                } 
+            },
+            dismissButton = {
+                TextButton(onClick = { showWarning = false }) { Text(stringResource(R.string.btn_back)) }
+            }
+        )
+    }
+
+    if (showPresetDialog) {
+        AlertDialog(
+            onDismissRequest = { showPresetDialog = false },
+            title = { Text(stringResource(R.string.dialog_title_preset)) },
+            confirmButton = { TextButton(onClick = { showPresetDialog = false }) { Text(stringResource(R.string.btn_back)) } },
+            text = {
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(PresetType.values()) { type ->
+                        ElevatedCard(onClick = { viewModel.startPreset(type); showPresetDialog = false }) {
+                            ListItem(headlineContent = { Text(stringResource(type.labelRes)) })
+                        }
+                    }
+                }
+            }
+        )
+    }
+
+    if (showSourceDialog) {
+        AlertDialog(
+            onDismissRequest = { showSourceDialog = false },
+            title = { Text(stringResource(R.string.dialog_title_source)) },
+            confirmButton = {},
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Button(onClick = { showSourceDialog = false; showPresetDialog = true }, modifier = Modifier.fillMaxWidth()) { 
+                        Text(stringResource(R.string.option_preset)) 
+                    }
+                    OutlinedButton(onClick = { showSourceDialog = false; onOpenFilePicker() }, modifier = Modifier.fillMaxWidth()) { 
+                        Text(stringResource(R.string.option_custom)) 
+                    }
+                }
+            }
+        )
     }
 }
 
 @Composable
-fun RealtimeWaveform(waveformData: List<Float>, intensity: Float, isPlaying: Boolean) {
+fun RealtimeWaveform(data: List<Float>, isPlaying: Boolean) {
     val color = MaterialTheme.colorScheme.primary
-    val infiniteTransition = rememberInfiniteTransition(label = "idle")
-    val idlePhase by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = (2 * Math.PI).toFloat(),
-        animationSpec = infiniteRepeatable(tween(5000, easing = LinearEasing)),
-        label = "phase"
+    val phase by rememberInfiniteTransition().animateFloat(
+        initialValue = 0f, targetValue = 6.28f,
+        animationSpec = infiniteRepeatable(tween(2000, easing = LinearEasing))
     )
 
-    val animatedPoints = waveformData.map {
-        animateFloatAsState(
-            targetValue = if (isPlaying) it * (1f + intensity) else 0f, 
-            animationSpec = spring(stiffness = Spring.StiffnessLow),
-            label = "point"
-        ).value
-    }
-
-    Canvas(modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 50.dp)) {
+    Canvas(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         val width = size.width
         val height = size.height
         val centerY = height / 2
         val path = Path()
+        val step = width / (data.size - 1)
 
-        if (animatedPoints.isNotEmpty()) {
-            val step = width / (animatedPoints.size - 1)
-            path.moveTo(0f, centerY)
-            for (i in 0 until animatedPoints.size - 1) {
-                val idleOffset = if (!isPlaying) sin(i * 0.15f + idlePhase) * 10f else 0f
-                val x1 = i * step
-                val y1 = centerY + (animatedPoints[i] * centerY * 0.7f) + idleOffset
-                val x2 = (i + 1) * step
-                val idleOffset2 = if (!isPlaying) sin((i + 1) * 0.15f + idlePhase) * 10f else 0f
-                val y2 = centerY + (animatedPoints[i + 1] * centerY * 0.7f) + idleOffset2
-                val controlX = (x1 + x2) / 2
-                path.cubicTo(controlX, y1, controlX, y2, x2, y2)
-            }
+        path.moveTo(0f, centerY)
+
+        for (i in 0 until data.size - 1) {
+            val x1 = i * step
+            val y1 = centerY + (if (isPlaying) data[i] else sin(i * 0.2f + phase) * 0.05f) * centerY * 0.8f
+            val x2 = (i + 1) * step
+            val y2 = centerY + (if (isPlaying) data[i + 1] else sin((i + 1) * 0.2f + phase) * 0.05f) * centerY * 0.8f
+
+            val cp1X = x1 + (x2 - x1) / 3f
+            val cp2X = x1 + 2f * (x2 - x1) / 3f
+            path.cubicTo(cp1X, y1, cp2X, y2, x2, y2)
         }
 
-        drawPath(path = path, color = color, style = Stroke(width = 8f, cap = StrokeCap.Round))
+        drawPath(path, color, style = Stroke(width = 8f, cap = StrokeCap.Round))
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SettingsPage(viewModel: HapticViewModel) {
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(stringResource(R.string.settings_title)) },
+                navigationIcon = {
+                    IconButton(onClick = { viewModel.isShowingSettings = false }) { 
+                        Icon(Icons.Default.ArrowBack, null) 
+                    }
+                }
+            )
+        }
+    ) { padding ->
+        Column(Modifier.padding(padding).padding(24.dp)) {
+            Text(stringResource(R.string.setting_boost_title), style = MaterialTheme.typography.labelLarge)
+            Slider(
+                value = viewModel.vibrationBoost,
+                onValueChange = { viewModel.vibrationBoost = it },
+                valueRange = 1.0f..3.0f,
+                steps = 20
+            )
+            Text(
+                text = stringResource(R.string.setting_boost_label, viewModel.vibrationBoost), 
+                color = MaterialTheme.colorScheme.primary
+            )
+            
+            HorizontalDivider(Modifier.padding(vertical = 24.dp))
+            
+            ListItem(
+                headlineContent = { Text(stringResource(R.string.setting_dynamic_title)) },
+                supportingContent = { Text(stringResource(R.string.setting_dynamic_desc)) },
+                trailingContent = { Switch(checked = true, onCheckedChange = {}) }
+            )
+        }
     }
 }

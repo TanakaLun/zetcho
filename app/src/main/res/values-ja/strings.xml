@@ -1,8 +1,28 @@
 <resources>
     <string name="app_name">Haptic Lab</string>
-    <string name="load_failed">読み込み失敗</string>
-    <string name="status_idle">準備はいい？</string>
-    <string name="status_playing">リズムに溺れて…もうすぐ絶頂を迎えます…</string>
-    <string name="btn_import">音源を入れる</string>
-    <string name="btn_play_pause">再生/停止</string>
+    <string name="status_idle">準備はいい？最高の瞬間を迎えよう</string>
+    <string name="status_playing">リズムに溺れて…絶頂まであと少し…</string>
+    <string name="status_preset">感官周波数を同期中: %s</string>
+    
+    <string name="btn_import">エネルギー注入</string>
+    <string name="dialog_title_source">ソースを選択</string>
+    <string name="dialog_title_preset">プリセットを選択</string>
+    <string name="option_preset">プリセット周波数（無限持続）</string>
+    <string name="option_custom">ローカル音源を導入</string>
+    
+    <string name="preset_rose">ローズコースト (優しい波)</string>
+    <string name="preset_gold">ゴールデンホール (荘厳な響き)</string>
+    <string name="preset_ocean">ディープオーシャン (深遠な共鳴)</string>
+    <string name="preset_passion">ワイルドパッション (激しい鼓動)</string>
+
+    <string name="warning_title">⚠️ 極致モードを起動？</string>
+    <string name="warning_content">このモードはモーターの電圧制限を解除し、より強烈な感覚を提供します。デバイスに修復不可能な損傷を与える可能性があります。感覚に身を委ねますか？</string>
+    <string name="btn_continue">はい、頂点へ進む</string>
+    <string name="btn_back">戻る</string>
+    
+    <string name="settings_title">調教センター</string>
+    <string name="setting_boost_title">極致振動ブースト (高電圧モード)</string>
+    <string name="setting_boost_label">現在の倍率: %1$.1fx</string>
+    <string name="setting_dynamic_title">インテリジェント動的周波数 (Beta)</string>
+    <string name="setting_dynamic_desc">低音の深さに合わせて振動を自動補正します</string>
 </resources>
