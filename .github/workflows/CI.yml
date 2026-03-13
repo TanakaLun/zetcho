@@ -64,9 +64,12 @@ jobs:
 
   build-debug:
     needs: check-skip-ci
-    if: needs.check-skip-ci.outputs.should-run == 'true'
+    if: |
+      needs.check-skip-ci.outputs.should-run == 'true' && 
+      (github.event_name == 'push' || 
+       github.event.inputs.build_all == 'both' || 
+       github.event.inputs.build_all == 'debug')
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event.inputs.build_all == 'both' || github.event.inputs.build_all == 'debug'
     outputs:
       build_timestamp: ${{ steps.build_info.outputs.build_timestamp }}
     env:
@@ -169,9 +172,12 @@ jobs:
 
   build-release:
     needs: check-skip-ci
-    if: needs.check-skip-ci.outputs.should-run == 'true'
+    if: |
+      needs.check-skip-ci.outputs.should-run == 'true' && 
+      (github.event_name == 'push' || 
+       github.event.inputs.build_all == 'both' || 
+       github.event.inputs.build_all == 'release')
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event.inputs.build_all == 'both' || github.event.inputs.build_all == 'release'
     outputs:
       build_timestamp: ${{ steps.build_info.outputs.build_timestamp }}
     env:
