@@ -62,7 +62,6 @@ jobs:
           echo "should-run=$SHOULD_RUN" >> $GITHUB_OUTPUT
           echo "CI Operational Decisions: $SHOULD_RUN"
 
-jobs:
   build-debug:
     needs: check-skip-ci
     if: needs.check-skip-ci.outputs.should-run == 'true'
