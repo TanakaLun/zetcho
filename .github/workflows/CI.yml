@@ -24,7 +24,48 @@ permissions:
   actions: read
 
 jobs:
+  check-skip-ci:
+    runs-on: ubuntu-latest
+    outputs:
+      should-run: ${{ steps.check.outputs.should-run }}
+    steps:
+      - name: Check for [skip ci] or [ci skip]
+        id: check
+        run: |
+          SHOULD_RUN="true"
+          
+          COMMIT_MSG="${{ github.event.head_commit.message }}"
+          PR_TITLE="${{ github.event.pull_request.title }}"
+          PR_BODY="${{ github.event.pull_request.body }}"
+          
+          echo "Commit message: $COMMIT_MSG"
+          echo "PR title: $PR_TITLE"
+          echo "PR body: $PR_BODY"
+          
+          # 检查各种可能的跳过标记
+          if [[ "$COMMIT_MSG" == *"[skip ci]"* ]] || \
+             [[ "$COMMIT_MSG" == *"[ci skip]"* ]] || \
+             [[ "$PR_TITLE" == *"[skip ci]"* ]] || \
+             [[ "$PR_TITLE" == *"[ci skip]"* ]] || \
+             [[ "$PR_BODY" == *"[skip ci]"* ]] || \
+             [[ "$PR_BODY" == *"[ci skip]"* ]]; then
+            echo "If a skip flag is detected, CI will be skipped.
+            SHOULD_RUN="false"
+          fi
+          
+          # if [[ "${{ github.event_name }}" == "push" ]] && \
+             # [[ "${{ github.actor }}" == "dependabot[bot]" ]]; then
+            # echo "Due to the Dependabot merge event, CI will be skipped."
+            # SHOULD_RUN="false"
+          # fi
+          
+          echo "should-run=$SHOULD_RUN" >> $GITHUB_OUTPUT
+          echo "CI Operational Decisions: $SHOULD_RUN"
+
+jobs:
   build-debug:
+    needs: check-skip-ci
+    if: needs.check-skip-ci.outputs.should-run == 'true'
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event.inputs.build_all == 'both' || github.event.inputs.build_all == 'debug'
     outputs:
@@ -128,6 +169,8 @@ jobs:
           retention-days: 7
 
   build-release:
+    needs: check-skip-ci
+    if: needs.check-skip-ci.outputs.should-run == 'true'
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event.inputs.build_all == 'both' || github.event.inputs.build_all == 'release'
     outputs:
