@@ -5,12 +5,12 @@ plugins {
 
 android {
     namespace = "io.tl.haptic"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "io.tl.haptic"
         minSdk = 32
-        targetSdk = 36
+        targetSdk = 37
         versionCode = 4
         versionName = "ikuiku"
 
@@ -53,11 +53,10 @@ android {
         sourceCompatibility = JavaVersion.VERSION_25
         targetCompatibility = JavaVersion.VERSION_25
     }
-    kotlin {
-        compilerOptions {
-            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.fromTarget("25"))
-        }
-    }
+}
+
+kotlin {
+    jvmToolchain(25)
 }
 
 dependencies {
@@ -73,4 +72,7 @@ dependencies {
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
     implementation(libs.ffmpeg.kit)
+    implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.ffmpeg.kit)
+
 }

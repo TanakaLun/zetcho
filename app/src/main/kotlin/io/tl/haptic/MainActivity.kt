@@ -1,58 +1,69 @@
 package io.tl.haptic
 
+import android.Manifest
+import android.content.ContentValues
+import android.content.pm.PackageManager
+import android.media.AudioAttributes
 import android.media.MediaPlayer
 import android.media.audiofx.Visualizer
 import android.net.Uri
 import android.os.*
+import android.provider.MediaStore
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
-import androidx.compose.animation.core.*
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.dp
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
-import io.tl.haptic.ui.*
+import io.tl.haptic.ui.MainScreen
+import io.tl.haptic.ui.SettingsPage
 import io.tl.haptic.ui.theme.HapticGeneratorTheme
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlin.math.*
+import kotlinx.coroutines.withContext
+import java.io.File
+import kotlin.math.hypot
 
 class MainActivity : ComponentActivity() {
     private val viewModel: HapticViewModel by viewModels()
     private var mediaPlayer: MediaPlayer? = null
     private var visualizer: Visualizer? = null
+    private var currentHapticFile: File? = null
 
     private val filePicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        uri?.let { loadAudio(it) }
+        uri?.let { 
+            // 获取并保存原文件名
+            viewModel.originalFileName = getFileNameFromUri(it)
+            startHapticProcessing(it) 
+        }
+    }
+    
+    private val exportLauncher = registerForActivityResult(ActivityResultContracts.CreateDocument("audio/ogg")) { uri ->
+        uri?.let { destUri ->
+            saveFileToSelectedUri(destUri)
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        checkAudioPermission()
 
+        // 核心：保留预设模式的马达驱动轮询
         lifecycleScope.launch {
-            while(true) {
-                if (viewModel.isPlaying && viewModel.intensity.floatValue > 0.05f) {
+            while (true) {
+                // 仅在预设模式下手动触发震动，音频模式由底层 Haptic Channels 接管
+                if (viewModel.isPlaying && viewModel.currentMode == HapticMode.PRESET && viewModel.intensity.floatValue > 0.05f) {
                     triggerHaptic(viewModel.intensity.floatValue)
                 }
-                delay(60)
+                delay(50)
             }
         }
 
@@ -65,7 +76,8 @@ class MainActivity : ComponentActivity() {
                         MainScreen(
                             viewModel = viewModel,
                             onOpenFilePicker = { filePicker.launch(arrayOf("audio/*")) },
-                            onTogglePlay = { handleTogglePlay() }
+                            onTogglePlay = { handleTogglePlay() },
+                            onExport = { exportHapticToStorage() }
                         )
                     }
                 }
@@ -73,27 +85,42 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun handleTogglePlay() {
-        if (viewModel.isPlaying) {
-            viewModel.stopAll()
-            mediaPlayer?.pause()
-            visualizer?.enabled = false
-        } else {
-            if (viewModel.currentMode == HapticMode.AUDIO && mediaPlayer != null) {
-                mediaPlayer?.start()
-                visualizer?.enabled = true
-                viewModel.isPlaying = true
+    private fun checkAudioPermission() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), 100)
+        }
+    }
+
+    private fun startHapticProcessing(uri: Uri) {
+        viewModel.stopAll()
+        mediaPlayer?.release()
+        visualizer?.release()
+        viewModel.isProcessing = true
+        
+        val targetFile = File(cacheDir, "haptic_session.ogg")
+        HapticTranscoder.transcode(this, uri, targetFile) { success ->
+            runOnUiThread {
+                viewModel.isProcessing = false
+                if (success) {
+                    currentHapticFile = targetFile
+                    initHapticPlayer(Uri.fromFile(targetFile))
+                } else {
+                    Toast.makeText(this, getString(R.string.toast_transcode_fail), Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
 
-    private fun loadAudio(uri: Uri) {
-        viewModel.stopAll()
-        mediaPlayer?.release()
-        visualizer?.release()
-
+    private fun initHapticPlayer(uri: Uri) {
         try {
             mediaPlayer = MediaPlayer().apply {
+                val attrs = AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .setHapticChannelsMuted(false) // 开启音频内嵌的触觉通道
+                    .build()
+                
+                setAudioAttributes(attrs)
                 setDataSource(this@MainActivity, uri)
                 prepare()
                 setOnCompletionListener { 
@@ -101,11 +128,19 @@ class MainActivity : ComponentActivity() {
                     visualizer?.enabled = false
                 }
             }
-            
-            visualizer = Visualizer(mediaPlayer!!.audioSessionId).apply {
+            setupVisualizer(mediaPlayer!!.audioSessionId)
+            mediaPlayer?.start()
+            viewModel.currentMode = HapticMode.AUDIO
+            viewModel.isPlaying = true
+        } catch (e: Exception) { e.printStackTrace() }
+    }
+
+    private fun setupVisualizer(sessionId: Int) {
+        try {
+            visualizer = Visualizer(sessionId).apply {
                 captureSize = Visualizer.getCaptureSizeRange()[1]
                 setDataCaptureListener(object : Visualizer.OnDataCaptureListener {
-                    override fun onWaveFormDataCapture(v: Visualizer?, waveform: ByteArray?, samplingRate: Int) {
+                    override fun onWaveFormDataCapture(v: Visualizer?, waveform: ByteArray?, sr: Int) {
                         waveform?.let { data ->
                             val points = List(64) { i ->
                                 val idx = (i * (data.size / 64)).coerceIn(0, data.size - 1)
@@ -115,13 +150,11 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
-                    override fun onFftDataCapture(v: Visualizer?, fft: ByteArray?, samplingRate: Int) {
+                    override fun onFftDataCapture(v: Visualizer?, fft: ByteArray?, sr: Int) {
                         fft?.let { safeFft ->
                             var energy = 0f
                             for (i in 1..12) {
-                                val r = safeFft[i * 2].toFloat()
-                                val im = safeFft[i * 2 + 1].toFloat()
-                                energy += hypot(r, im)
+                                energy += hypot(safeFft[i*2].toFloat(), safeFft[i*2+1].toFloat())
                             }
                             viewModel.intensity.floatValue = (energy / 600f).coerceIn(0f, 1f)
                         }
@@ -129,212 +162,103 @@ class MainActivity : ComponentActivity() {
                 }, Visualizer.getMaxCaptureRate() / 2, true, true)
                 enabled = true
             }
-            
-            viewModel.currentMode = HapticMode.AUDIO
-            mediaPlayer?.start()
-            viewModel.isPlaying = true
         } catch (e: Exception) { e.printStackTrace() }
     }
 
+    // 原版触发逻辑（用于 PRESET 模式）
     private fun triggerHaptic(intensity: Float) {
         val vibrator = getSystemService(Vibrator::class.java) ?: return
         val boost = if (viewModel.isSensualMode) 1.8f else 1.0f
         val finalStrength = (intensity * intensity * 255 * boost * viewModel.vibrationBoost).toInt().coerceIn(0, 255)
-        vibrator.vibrate(VibrationEffect.createOneShot(50, finalStrength))
+        
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            vibrator.vibrate(VibrationEffect.createOneShot(50, finalStrength))
+        } else {
+            @Suppress("DEPRECATION")
+            vibrator.vibrate(50)
+        }
+    }
+
+    private fun handleTogglePlay() {
+        if (viewModel.currentMode == HapticMode.AUDIO) {
+            if (mediaPlayer == null) return
+            if (viewModel.isPlaying) {
+                mediaPlayer?.pause()
+                visualizer?.enabled = false
+            } else {
+                mediaPlayer?.start()
+                visualizer?.enabled = true
+            }
+            viewModel.isPlaying = !viewModel.isPlaying
+        } else if (viewModel.currentMode == HapticMode.PRESET) {
+            viewModel.isPlaying = !viewModel.isPlaying
+        }
+    }
+    
+    private fun getFileNameFromUri(uri: Uri): String {
+        var result: String? = null
+        if (uri.scheme == "content") {
+            val cursor = contentResolver.query(uri, null, null, null, null)
+            try {
+                if (cursor != null && cursor.moveToFirst()) {
+                    val index = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    if (index != -1) {
+                        result = cursor.getString(index)
+                    }
+                }
+            } finally {
+                cursor?.close()
+            }
+        }
+        if (result == null) {
+            result = uri.path
+            val cut = result?.lastIndexOf('/') ?: -1
+            if (cut != -1) {
+                result = result?.substring(cut + 1)
+            }
+        }
+        return result ?: "audio"
+    }
+
+    private fun exportHapticToStorage() {
+        val file = currentHapticFile
+        if (file == null || viewModel.currentMode != HapticMode.AUDIO) {
+            Toast.makeText(this, getString(R.string.toast_export_fail), Toast.LENGTH_SHORT).show()
+            return
+        }
+        
+        // 提取原文件名（去掉后缀），加上 _haptic.ogg
+        val baseName = viewModel.originalFileName.substringBeforeLast(".")
+        val suggestedName = "${baseName}_haptic.ogg"
+        
+        // 调起系统文件管理器，让用户选择保存位置，并传入建议的文件名
+        exportLauncher.launch(suggestedName)
+    }
+    
+    private fun saveFileToSelectedUri(destUri: Uri) {
+        val file = currentHapticFile ?: return
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                contentResolver.openOutputStream(destUri)?.use { outStream ->
+                    file.inputStream().use { inStream ->
+                        inStream.copyTo(outStream)
+                    }
+                }
+                withContext(Dispatchers.Main) { 
+                    Toast.makeText(this@MainActivity, getString(R.string.toast_export_success), Toast.LENGTH_SHORT).show() 
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(this@MainActivity, getString(R.string.toast_export_fail), Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
     }
 
     override fun onDestroy() {
         super.onDestroy()
         mediaPlayer?.release()
         visualizer?.release()
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun MainScreen(viewModel: HapticViewModel, onOpenFilePicker: () -> Unit, onTogglePlay: () -> Unit) {
-    var showSourceDialog by remember { mutableStateOf(false) }
-    var showPresetDialog by remember { mutableStateOf(false) }
-    var showWarning by remember { mutableStateOf(false) }
-    var clickCount by remember { mutableIntStateOf(0) }
-
-    Scaffold(
-        modifier = Modifier.fillMaxSize(),
-        topBar = {
-            CenterAlignedTopAppBar(
-                title = {
-                    Text(stringResource(R.string.app_name), modifier = Modifier.clickable { 
-                        if (++clickCount >= 3) { showWarning = true; clickCount = 0 }
-                    })
-                },
-                actions = { 
-                    IconButton(onClick = { viewModel.isShowingSettings = true }) { 
-                        Icon(Icons.Default.Settings, null) 
-                    } 
-                }
-            )
-        }
-    ) { innerPadding ->
-        Column(
-            modifier = Modifier
-                .padding(innerPadding)
-                .consumeWindowInsets(innerPadding)
-                .fillMaxSize()
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(32.dp)
-        ) {
-            Card(
-                modifier = Modifier.fillMaxWidth().height(300.dp),
-                shape = RoundedCornerShape(32.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
-            ) {
-                RealtimeWaveform(viewModel.rawWaveformData, viewModel.isPlaying)
-            }
-
-            Text(
-                text = if (viewModel.isPlaying) stringResource(R.string.status_playing) else stringResource(R.string.status_idle),
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.secondary
-            )
-
-            Spacer(Modifier.weight(1f))
-
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                FilledTonalIconButton(onClick = { showSourceDialog = true }, modifier = Modifier.size(72.dp)) {
-                    Icon(Icons.Default.Add, null, modifier = Modifier.size(32.dp))
-                }
-                Spacer(Modifier.width(48.dp))
-                LargeFloatingActionButton(
-                    onClick = { onTogglePlay() },
-                    shape = RoundedCornerShape(24.dp),
-                    containerColor = if (viewModel.isPlaying) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer
-                ) {
-                    Icon(if (viewModel.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null, modifier = Modifier.size(40.dp))
-                }
-            }
-        }
-    }
-
-    if (showWarning) {
-        AlertDialog(
-            onDismissRequest = { showWarning = false },
-            title = { Text(stringResource(R.string.warning_title)) },
-            text = { Text(stringResource(R.string.warning_content)) },
-            confirmButton = { 
-                Button(onClick = { viewModel.isSensualMode = true; showWarning = false }) { 
-                    Text(stringResource(R.string.btn_continue)) 
-                } 
-            },
-            dismissButton = {
-                TextButton(onClick = { showWarning = false }) { Text(stringResource(R.string.btn_back)) }
-            }
-        )
-    }
-
-    if (showPresetDialog) {
-        AlertDialog(
-            onDismissRequest = { showPresetDialog = false },
-            title = { Text(stringResource(R.string.dialog_title_preset)) },
-            confirmButton = { TextButton(onClick = { showPresetDialog = false }) { Text(stringResource(R.string.btn_back)) } },
-            text = {
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(PresetType.values()) { type ->
-                        ElevatedCard(onClick = { viewModel.startPreset(type); showPresetDialog = false }) {
-                            ListItem(headlineContent = { Text(stringResource(type.labelRes)) })
-                        }
-                    }
-                }
-            }
-        )
-    }
-
-    if (showSourceDialog) {
-        AlertDialog(
-            onDismissRequest = { showSourceDialog = false },
-            title = { Text(stringResource(R.string.dialog_title_source)) },
-            confirmButton = {},
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Button(onClick = { showSourceDialog = false; showPresetDialog = true }, modifier = Modifier.fillMaxWidth()) { 
-                        Text(stringResource(R.string.option_preset)) 
-                    }
-                    OutlinedButton(onClick = { showSourceDialog = false; onOpenFilePicker() }, modifier = Modifier.fillMaxWidth()) { 
-                        Text(stringResource(R.string.option_custom)) 
-                    }
-                }
-            }
-        )
-    }
-}
-
-@Composable
-fun RealtimeWaveform(data: List<Float>, isPlaying: Boolean) {
-    val color = MaterialTheme.colorScheme.primary
-    val phase by rememberInfiniteTransition().animateFloat(
-        initialValue = 0f, targetValue = 6.28f,
-        animationSpec = infiniteRepeatable(tween(2000, easing = LinearEasing))
-    )
-
-    Canvas(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        val width = size.width
-        val height = size.height
-        val centerY = height / 2
-        val path = Path()
-        val step = width / (data.size - 1)
-
-        path.moveTo(0f, centerY)
-
-        for (i in 0 until data.size - 1) {
-            val x1 = i * step
-            val y1 = centerY + (if (isPlaying) data[i] else sin(i * 0.2f + phase) * 0.05f) * centerY * 0.8f
-            val x2 = (i + 1) * step
-            val y2 = centerY + (if (isPlaying) data[i + 1] else sin((i + 1) * 0.2f + phase) * 0.05f) * centerY * 0.8f
-
-            val cp1X = x1 + (x2 - x1) / 3f
-            val cp2X = x1 + 2f * (x2 - x1) / 3f
-            path.cubicTo(cp1X, y1, cp2X, y2, x2, y2)
-        }
-
-        drawPath(path, color, style = Stroke(width = 8f, cap = StrokeCap.Round))
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun SettingsPage(viewModel: HapticViewModel) {
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.settings_title)) },
-                navigationIcon = {
-                    IconButton(onClick = { viewModel.isShowingSettings = false }) { 
-                        Icon(Icons.Default.ArrowBack, null) 
-                    }
-                }
-            )
-        }
-    ) { padding ->
-        Column(Modifier.padding(padding).padding(24.dp)) {
-            Text(stringResource(R.string.setting_boost_title), style = MaterialTheme.typography.labelLarge)
-            Slider(
-                value = viewModel.vibrationBoost,
-                onValueChange = { viewModel.vibrationBoost = it },
-                valueRange = 1.0f..3.0f,
-                steps = 20
-            )
-            Text(
-                text = stringResource(R.string.setting_boost_label, viewModel.vibrationBoost), 
-                color = MaterialTheme.colorScheme.primary
-            )
-            
-            HorizontalDivider(Modifier.padding(vertical = 24.dp))
-            
-            ListItem(
-                headlineContent = { Text(stringResource(R.string.setting_dynamic_title)) },
-                supportingContent = { Text(stringResource(R.string.setting_dynamic_desc)) },
-                trailingContent = { Switch(checked = true, onCheckedChange = {}) }
-            )
-        }
     }
 }
