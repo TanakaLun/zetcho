@@ -169,7 +169,7 @@ class MainActivity : ComponentActivity() {
     private fun triggerHaptic(intensity: Float) {
         val vibrator = getSystemService(Vibrator::class.java) ?: return
         val boost = if (viewModel.isSensualMode) 1.8f else 1.0f
-        val finalStrength = (intensity * intensity * 255 * boost * viewModel.vibrationBoost).toInt().coerceIn(0, 255)
+        val finalStrength = (intensity * intensity * 255 * boost * viewModel.vibrationBoost).toInt().coerceIn(1, 255)
         
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             vibrator.vibrate(VibrationEffect.createOneShot(50, finalStrength))

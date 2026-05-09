@@ -1,5 +1,6 @@
 package io.tl.haptic.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -14,6 +15,7 @@ import io.tl.haptic.R
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsPage(viewModel: HapticViewModel) {
+    BackHandler { viewModel.isShowingSettings = false }
     Scaffold(
         topBar = {
             TopAppBar(
