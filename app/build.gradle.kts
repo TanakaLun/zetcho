@@ -5,16 +5,20 @@ plugins {
 
 android {
     namespace = "io.tl.haptic"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "io.tl.haptic"
         minSdk = 32
-        targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        targetSdk = 37
+        versionCode = 4
+        versionName = "ikuiku"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        
+        ndk {
+            abiFilters.add("arm64-v8a")
+        }
     }
 
     buildFeatures {
@@ -46,14 +50,13 @@ android {
     }
     
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
+        sourceCompatibility = JavaVersion.VERSION_25
+        targetCompatibility = JavaVersion.VERSION_25
     }
-    kotlin {
-        compilerOptions {
-            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.fromTarget("17"))
-        }
-    }
+}
+
+kotlin {
+    jvmToolchain(25)
 }
 
 dependencies {
@@ -68,4 +71,8 @@ dependencies {
     implementation(libs.androidx.material.icons.extended)
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
+    implementation(libs.ffmpeg.kit)
+    implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.ffmpeg.kit)
+
 }
